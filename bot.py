@@ -66,13 +66,14 @@ def save_subscriptions(subscriptions: Set[int]) -> None:
 subscribed_chats: Set[int] = load_subscriptions()
 
 
-async def send_puzzle(chat_id: int, context: Optional[ContextTypes.DEFAULT_TYPE] = None) -> bool:
+async def send_puzzle(chat_id: int, context: Optional[ContextTypes.DEFAULT_TYPE] = None, random_puzzle: bool = False) -> bool:
     """
-    Отправляет задачу дня в указанный чат.
+    Отправляет задачу дня или случайную задачу в указанный чат.
     
     Args:
         chat_id: ID чата для отправки
         context: Контекст бота (опционально)
+        random_puzzle: Если True, отправляет случайную задачу, иначе задачу дня
         
     Returns:
         True если успешно, False в противном случае.
@@ -80,11 +81,17 @@ async def send_puzzle(chat_id: int, context: Optional[ContextTypes.DEFAULT_TYPE]
     global current_puzzles
     
     try:
-        # Получаем задачу дня
-        puzzle_data = lichess_api.get_daily_puzzle()
-        if not puzzle_data:
-            logger.error("Не удалось получить задачу дня")
-            return False
+        # Получаем задачу дня или случайную задачу
+        if random_puzzle:
+            puzzle_data = lichess_api.get_random_puzzle()
+            if not puzzle_data:
+                logger.error("Не удалось получить случайную задачу")
+                return False
+        else:
+            puzzle_data = lichess_api.get_daily_puzzle()
+            if not puzzle_data:
+                logger.error("Не удалось получить задачу дня")
+                return False
         
         # Сохраняем задачу для этого чата
         current_puzzles[chat_id] = puzzle_data
@@ -222,7 +229,13 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 async def puzzle_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Обработчик команды /puzzle."""
     chat_id = update.effective_chat.id
-    await send_puzzle(chat_id, context)
+    await send_puzzle(chat_id, context, random_puzzle=False)
+
+
+async def random_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обработчик команды /random."""
+    chat_id = update.effective_chat.id
+    await send_puzzle(chat_id, context, random_puzzle=True)
 
 
 async def subscribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -369,6 +382,7 @@ def main() -> None:
     # Регистрируем обработчики команд
     bot_application.add_handler(CommandHandler("start", start_command))
     bot_application.add_handler(CommandHandler("puzzle", puzzle_command))
+    bot_application.add_handler(CommandHandler("random", random_command))
     bot_application.add_handler(CommandHandler("solution", solution_command))
     bot_application.add_handler(CommandHandler("subscribe", subscribe_command))
     bot_application.add_handler(CommandHandler("unsubscribe", unsubscribe_command))

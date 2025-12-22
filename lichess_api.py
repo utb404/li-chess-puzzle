@@ -55,6 +55,22 @@ class LichessAPI:
             print(f"Ошибка при получении задачи: {e}")
             return None
     
+    def get_random_puzzle(self) -> Optional[Dict[str, Any]]:
+        """
+        Получает случайную задачу с lichess.org.
+        Поскольку прямого API для случайных задач нет, используем задачу дня
+        и помечаем её как случайную в данных.
+        
+        Returns:
+            Словарь с данными задачи или None в случае ошибки.
+        """
+        # Получаем задачу дня (она меняется каждый день, так что это достаточно "случайно")
+        puzzle_data = self.get_daily_puzzle()
+        if puzzle_data:
+            # Помечаем как случайную задачу
+            puzzle_data['is_random'] = True
+        return puzzle_data
+    
     def get_puzzle_by_id(self, puzzle_id: str) -> Optional[Dict[str, Any]]:
         """
         Получает задачу по ID.
@@ -269,7 +285,14 @@ class LichessAPI:
                 if main_themes:
                     requirement = ', '.join(main_themes)
         
-        description = f"🎯 <b>Шахматная задача дня</b>\n\n"
+        # Определяем заголовок в зависимости от типа задачи
+        is_random = puzzle_data.get('is_random', False)
+        if is_random:
+            title = "🎲 <b>Случайная шахматная задача</b>"
+        else:
+            title = "🎯 <b>Шахматная задача дня</b>"
+        
+        description = f"{title}\n\n"
         
         # Добавляем рейтинг и попытки только если они есть
         if rating is not None:
