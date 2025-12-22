@@ -33,6 +33,12 @@ ENV/
 # Subscriptions data
 subscriptions.json
 
+# Temporary files
+bot.log
+test_board.png
+*.png
+env.example
+
 # IDE
 .vscode/
 .idea/
