@@ -1,6 +1,0 @@
-# Telegram Bot Token
-TELEGRAM_BOT_TOKEN=7636450449:AAGNCKztc9FpDOlNYTzmq4cJF0dzd5BlBB0
-
-# Расписание отправки (в формате HH:MM, например 09:00)
-SCHEDULE_TIME=09:00
-
