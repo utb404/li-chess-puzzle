@@ -1,23 +1,33 @@
 """
 Модуль для работы с API lichess.org для получения шахматных задач.
 """
+import csv
+import random
+from pathlib import Path
+
 import requests
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from io import BytesIO
 import chess
 import chess.pgn
 
+# Файл с популярными задачами из базы lichess
+# (создается скриптом scripts/download_puzzles.py)
+LOCAL_PUZZLES_FILE = Path(__file__).parent / "puzzles.csv"
+
 
 class LichessAPI:
     """Класс для взаимодействия с API lichess.org."""
-    
+
     BASE_URL = "https://lichess.org"
-    
+
     def __init__(self):
         self.session = requests.Session()
         self.session.headers.update({
             'User-Agent': 'Telegram Chess Puzzle Bot'
         })
+        # Кэш локальной базы популярных задач
+        self._local_puzzles: Optional[List[Dict[str, str]]] = None
     
     def get_daily_puzzle(self) -> Optional[Dict[str, Any]]:
         """
@@ -55,21 +65,72 @@ class LichessAPI:
             print(f"Ошибка при получении задачи: {e}")
             return None
     
+    def _load_local_puzzles(self) -> List[Dict[str, str]]:
+        """
+        Загружает локальную базу популярных задач из puzzles.csv (с кэшированием).
+
+        Returns:
+            Список задач (строк CSV в виде словарей). Пустой список, если файла нет.
+        """
+        if self._local_puzzles is None:
+            if not LOCAL_PUZZLES_FILE.exists():
+                print(f"Файл с задачами не найден: {LOCAL_PUZZLES_FILE}. "
+                      f"Запустите scripts/download_puzzles.py для его создания.")
+                self._local_puzzles = []
+            else:
+                try:
+                    with open(LOCAL_PUZZLES_FILE, 'r', encoding='utf-8') as f:
+                        self._local_puzzles = list(csv.DictReader(f))
+                except Exception as e:
+                    print(f"Ошибка при чтении {LOCAL_PUZZLES_FILE}: {e}")
+                    self._local_puzzles = []
+        return self._local_puzzles
+
     def get_random_puzzle(self) -> Optional[Dict[str, Any]]:
         """
-        Получает случайную задачу с lichess.org.
-        Поскольку прямого API для случайных задач нет, используем задачу дня
-        и помечаем её как случайную в данных.
-        
+        Возвращает случайную задачу из локальной базы 500 самых популярных
+        задач lichess (puzzles.csv).
+
         Returns:
-            Словарь с данными задачи или None в случае ошибки.
+            Словарь с данными задачи (в том же формате, что и задача дня)
+            или None в случае ошибки.
         """
-        # Получаем задачу дня (она меняется каждый день, так что это достаточно "случайно")
-        puzzle_data = self.get_daily_puzzle()
-        if puzzle_data:
-            # Помечаем как случайную задачу
-            puzzle_data['is_random'] = True
-        return puzzle_data
+        puzzles = self._load_local_puzzles()
+        if not puzzles:
+            return None
+
+        row = random.choice(puzzles)
+        try:
+            # В базе lichess FEN — это позиция ПЕРЕД ходом соперника:
+            # первый ход из Moves делает соперник, а решение — остальные ходы.
+            moves = row['Moves'].split()
+            board = chess.Board(row['FEN'])
+            board.push(chess.Move.from_uci(moves[0]))
+
+            puzzle_id = row['PuzzleId']
+            rating = int(row['Rating']) if row.get('Rating') else None
+            plays = int(row['NbPlays']) if row.get('NbPlays') else None
+            themes = row.get('Themes', '').split()
+
+            return {
+                'id': puzzle_id,
+                'rating': rating,
+                'plays': plays,
+                'puzzle': {
+                    'id': puzzle_id,
+                    'rating': rating,
+                    'plays': plays,
+                    'solution': moves[1:],
+                    'themes': themes,
+                },
+                'game': None,
+                'url': f"{self.BASE_URL}/training/{puzzle_id}",
+                'fen': board.fen(),
+                'is_random': True,
+            }
+        except Exception as e:
+            print(f"Ошибка при обработке задачи из локальной базы: {e}")
+            return None
     
     def get_puzzle_by_id(self, puzzle_id: str) -> Optional[Dict[str, Any]]:
         """
@@ -178,10 +239,14 @@ class LichessAPI:
         Returns:
             FEN строка позиции.
         """
+        # Для задач из локальной базы FEN уже вычислен
+        if puzzle_data.get('fen'):
+            return puzzle_data['fen']
+
         puzzle = puzzle_data.get('puzzle', {})
-        game = puzzle_data.get('game', {})
+        game = puzzle_data.get('game', {}) or {}
         solution = puzzle.get('solution', [])
-        
+
         # Пытаемся получить FEN из PGN
         pgn = game.get('pgn', '')
         if pgn:

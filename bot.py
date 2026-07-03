@@ -213,6 +213,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         "Привет! Я бот для шахматных задач с lichess.org.\n\n"
         "Доступные команды:\n"
         "/puzzle - Получить задачу дня\n"
+        "/random - Получить случайную задачу из 500 самых популярных\n"
         "/solution - Показать решение текущей задачи\n"
         "/subscribe - Подписаться на ежедневные задачи\n"
         "/unsubscribe - Отписаться от ежедневных задач\n"
@@ -235,7 +236,12 @@ async def puzzle_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 async def random_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Обработчик команды /random."""
     chat_id = update.effective_chat.id
-    await send_puzzle(chat_id, context, random_puzzle=True)
+    success = await send_puzzle(chat_id, context, random_puzzle=True)
+    if not success:
+        await update.message.reply_text(
+            "Не удалось получить случайную задачу. "
+            "Возможно, база задач (puzzles.csv) еще не загружена."
+        )
 
 
 async def subscribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
