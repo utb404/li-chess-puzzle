@@ -35,6 +35,13 @@ lichess_api = LichessAPI()
 # Храним текущую задачу для каждого чата отдельно
 current_puzzles: Dict[int, dict] = {}
 bot_application: Optional[Application] = None
+main_loop: Optional[asyncio.AbstractEventLoop] = None
+
+
+async def remember_main_loop(_: Application) -> None:
+    """Запоминает event loop бота, чтобы планировщик из другого потока отправлял задачи в нём."""
+    global main_loop
+    main_loop = asyncio.get_running_loop()
 
 # Файл для хранения подписок
 SUBSCRIPTIONS_FILE = Path("subscriptions.json")
@@ -158,23 +165,16 @@ async def send_puzzle(chat_id: int, context: Optional[ContextTypes.DEFAULT_TYPE]
                         )
                         
                         # Отправляем решение сразу после (без задержки, чтобы выглядело как одно сообщение)
+                        # Решение никогда не отправляем без спойлера: при ошибке его можно получить через /solution
                         if solution_text:
                             try:
-                                # Используем MarkdownV2 для спойлера
-                                escaped_solution = solution_text.replace('*', '\\*').replace('_', '\\_').replace('[', '\\[').replace(']', '\\]').replace('(', '\\(').replace(')', '\\)').replace('~', '\\~').replace('`', '\\`').replace('>', '\\>').replace('#', '\\#').replace('+', '\\+').replace('-', '\\-').replace('=', '\\=').replace('|', '\\|').replace('{', '\\{').replace('}', '\\}').replace('.', '\\.').replace('!', '\\!')
-                                spoiler_msg = f"💡 <b>Решение:</b>\n\n||{escaped_solution}||"
                                 await bot_to_use.send_message(
                                     chat_id=chat_id,
-                                    text=spoiler_msg,
-                                    parse_mode=ParseMode.MARKDOWN_V2
+                                    text=f"<tg-spoiler>{solution_text}</tg-spoiler>",
+                                    parse_mode=ParseMode.HTML
                                 )
                             except Exception as e2:
                                 logger.warning("Не удалось отправить решение со спойлером: %s", e2)
-                                await bot_to_use.send_message(
-                                    chat_id=chat_id,
-                                    text=f"💡 <b>Решение:</b>\n\n{solution_text}",
-                                    parse_mode=ParseMode.HTML
-                                )
                 else:
                     raise ValueError("Изображение пустое")
             except Exception as e:
@@ -300,25 +300,10 @@ async def solution_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     try:
         solution_text = lichess_api.format_solution(current_puzzle)
         
-        # Отправляем решение под спойлером
-        # В Telegram спойлеры создаются через ||текст|| в MarkdownV2
-        # Но нужно экранировать специальные символы
-        try:
-            # Экранируем специальные символы для MarkdownV2
-            escaped_text = solution_text.replace('*', '\\*').replace('_', '\\_').replace('[', '\\[').replace(']', '\\]').replace('(', '\\(').replace(')', '\\)').replace('~', '\\~').replace('`', '\\`').replace('>', '\\>').replace('#', '\\#').replace('+', '\\+').replace('-', '\\-').replace('=', '\\=').replace('|', '\\|').replace('{', '\\{').replace('}', '\\}').replace('.', '\\.').replace('!', '\\!')
-            spoiler_text = f"||{escaped_text}||"
-            
-            await update.message.reply_text(
-                spoiler_text,
-                parse_mode=ParseMode.MARKDOWN_V2
-            )
-        except Exception as e:
-            logger.warning("Не удалось отправить со спойлером, отправляем без: %s", e)
-            # Fallback: отправляем без спойлера
-            await update.message.reply_text(
-                solution_text,
-                parse_mode=ParseMode.HTML
-            )
+        await update.message.reply_text(
+            f"<tg-spoiler>{solution_text}</tg-spoiler>",
+            parse_mode=ParseMode.HTML
+        )
     except Exception as e:
         logger.error("Ошибка при отправке решения: %s", e)
         await update.message.reply_text(
@@ -345,10 +330,6 @@ def run_scheduler():
                     schedule_time, len(subscribed_chats))
         
         try:
-            # Создаем новый event loop для асинхронной задачи
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            
             # Отправляем задачу во все подписанные чаты
             async def send_to_all():
                 tasks = [send_puzzle(chat_id) for chat_id in subscribed_chats]
@@ -357,8 +338,8 @@ def run_scheduler():
                 success_count = sum(1 for r in results if r is True)
                 logger.info("Отправлено успешно: %d из %d", success_count, len(subscribed_chats))
             
-            loop.run_until_complete(send_to_all())
-            loop.close()
+            # HTTP-клиент бота привязан к loop'у polling'а — выполняем отправку в нём, а не в новом loop'е
+            asyncio.run_coroutine_threadsafe(send_to_all(), main_loop).result()
         except Exception as e:
             logger.error("Ошибка при выполнении запланированной задачи: %s", e)
     
@@ -383,7 +364,7 @@ def main() -> None:
         return
     
     # Создаем приложение бота
-    bot_application = Application.builder().token(token).build()
+    bot_application = Application.builder().token(token).post_init(remember_main_loop).build()
     
     # Регистрируем обработчики команд
     bot_application.add_handler(CommandHandler("start", start_command))
